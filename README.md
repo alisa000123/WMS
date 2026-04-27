@@ -23,7 +23,7 @@ Individual item tracking
 4. Implement
 5. Test
 6. Improve
-7. 
+
 # Requirements for all tiers
 The system must:
 -User Interface
