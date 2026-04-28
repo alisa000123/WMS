@@ -1,112 +1,157 @@
-import sys
-import os
-import time
-import threading
+from py_ads_client import ADSClient, ADSSymbol, BOOL, LREAL
+from time import sleep
+REMOTE_TRANSFER_ITEM = ADSSymbol("Remote.transfer_item", BOOL)
+REMOTE_SRC_X = ADSSymbol("Remote.src_x", LREAL)
+REMOTE_SRC_Y = ADSSymbol("Remote.src_y", LREAL)
+REMOTE_DST_X = ADSSymbol("Remote.dst_x", LREAL)
+REMOTE_DST_Y = ADSSymbol("Remote.dst_y", LREAL)
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sim_path = os.path.abspath(os.path.join(current_dir, "../block_storage_sim/src"))
-sys.path.append(sim_path)
+PLC_IP = "127.0.0.1"
+PLC_NET_ID = "127.0.0.1.1.1"
+PLC_PORT = 851
+LOCAL_NET_ID = "127.0.0.1.1.2"
 
-try:
-    from block_storage_simulator.simulator import BlockStorageSimulator
-    from block_storage_simulator.gui import SimulatorApp
-    from block_storage_simulator.constants import ConveyorState
-    from block_storage_simulator.models import TransferCommand
-    Has_Simulator = True
-except ImportError:
-    Has_Simulator = False
-if not Has_Simulator:
-    print("Error:simulator is not found")
-    sys.exit(1)
+TRANSFER_SLOT_CENTER_X = 160.0
+TRANSFER_SLOT_CENTER_Y = 410.0
+
+AREA_MIN_X = 0.0
+AREA_MIN_Y = 0.0
+AREA_MAX_X = 400.0
+STORAGE_MAX_Y = 300.0
+
+BLOCK_SIZE_MM = 60.0
+BLOCK_HALF_SIZE_MM = BLOCK_SIZE_MM / 2.0
+
 
 class Warehouse:
-    def __init__(self):
-        self.stock = {}
-        self.history = []
+    def __init__(self, ads_client):
+        self.ads = ads_client
+        self.positions = []
+        self.occupied = {}
 
-    def add_stock(self, product, quantity):
-        if quantity <= 0:
-            print("Quantity must be greater than 0")
-            return
+        x = AREA_MIN_X + BLOCK_HALF_SIZE_MM
+        while x <= AREA_MAX_X - BLOCK_HALF_SIZE_MM:
+            y = AREA_MIN_Y + BLOCK_HALF_SIZE_MM
+            while y <= STORAGE_MAX_Y - BLOCK_HALF_SIZE_MM:
+                pos = (x, y)
+                self.positions.append(pos)
+                self.occupied[pos] = False
+                y += BLOCK_SIZE_MM
+            x += BLOCK_SIZE_MM
 
-        if product in self.stock:
-            self.stock[product] += quantity
-        else:
-            self.stock[product] = quantity
+    def show(self):
+        occupied = sum(1 for value in self.occupied.values() if value)
+        total = len(self.positions)
 
-        self.history.append(f"IN: {product} x{quantity}")
-        print(f"Added {quantity} of {product}")
+        print("\n--- STORAGE STATUS ---")
+        print(f"Total positions: {total}")
+        print(f"Occupied: {occupied}")
+        print(f"Free: {total - occupied}")
 
-    def remove_stock(self, product, quantity):
-        if product not in self.stock:
-            print("Product not found")
-            return
+    def transfer(self, src_x, src_y, dst_x, dst_y):
+        self.ads.write_symbol(REMOTE_SRC_X, src_x)
+        self.ads.write_symbol(REMOTE_SRC_Y, src_y)
+        self.ads.write_symbol(REMOTE_DST_X, dst_x)
+        self.ads.write_symbol(REMOTE_DST_Y, dst_y)
+        sleep(0.1)
+        self.ads.write_symbol(REMOTE_TRANSFER_ITEM, True)
+        sleep(0.1)
+        self.ads.write_symbol(REMOTE_TRANSFER_ITEM, False)
 
-        if self.stock[product] < quantity:
-            print("Not enough stock")
-            return
+    def add_block(self):
+        for pos in self.positions:
+            if not self.occupied[pos]:
+                x, y = pos
+                self.ads.write_symbol(ADSSymbol("Remote.send_pallet", BOOL), True)
 
-        self.stock[product] -= quantity
-        self.history.append(f"OUT: {product} x{quantity}")
-        print(f"Removed {quantity} of {product}")
+                sleep(0.1)
+                self.ads.write_symbol(ADSSymbol("Remote.send_pallet", BOOL), False)
+                sleep(0.5)
+                self.ads.write_symbol(ADSSymbol("Remote.release_from_imaging", BOOL), True)
+                sleep(0.1)
+                self.ads.write_symbol(ADSSymbol("Remote.release_from_imaging", BOOL), False)
+                sleep(0.5)
 
-        if self.stock[product] == 0:
-            del self.stock[product]
+                self.transfer(
+                    TRANSFER_SLOT_CENTER_X,
+                    TRANSFER_SLOT_CENTER_Y,
+                    x,
+                    y
+                )
 
-    def show_stock(self):
-        print("\nCurrent stock:")
-        if not self.stock:
-            print("Empty")
-            return
+                self.occupied[pos] = True
+                print(f"Block moved to {pos}")
 
-        for product, quantity in self.stock.items():
-            print(f"{product}: {quantity}")
+                sleep(0.5)
+                self.ads.write_symbol(ADSSymbol("Remote.return_pallet", BOOL), True)
+                sleep(0.1)
+                self.ads.write_symbol(ADSSymbol("Remote.return_pallet", BOOL), False)
+                return
 
-    def show_history(self):
-        print("\nTransaction history:")
-        if not self.history:
-            print("No transactions yet")
-            return
+        print("Warehouse is full")
 
-        for item in self.history:
-            print(item)
+    def remove_block(self):
+        for pos in self.positions:
+            if self.occupied[pos]:
+                x, y = pos
+                self.ads.write_symbol(ADSSymbol("Remote.send_pallet", BOOL), True)
+                sleep(0.1)
+                self.ads.write_symbol(ADSSymbol("Remote.send_pallet", BOOL), False)
+                sleep(0.5)
+                self.ads.write_symbol(ADSSymbol("Remote.release_from_imaging", BOOL), True)
+                sleep(0.1)
+                self.ads.write_symbol(ADSSymbol("Remote.release_from_imaging", BOOL), False)
+                sleep(0.5)
+                
+                self.transfer(
+                    x,
+                    y,
+                    TRANSFER_SLOT_CENTER_X,
+                    TRANSFER_SLOT_CENTER_Y
+                )
+                sleep(0.5)
+                self.ads.write_symbol(ADSSymbol("Remote.return_pallet", BOOL), True)
+                sleep(0.1)
+                self.ads.write_symbol(ADSSymbol("Remote.return_pallet", BOOL), False)
+
+                self.occupied[pos] = False
+                print(f"Block removed from {pos}")
+                return
+
+        print("Warehouse is empty")
 
 
 def main():
-    warehouse = Warehouse()
+    ads = ADSClient(local_ams_net_id=LOCAL_NET_ID)
+    ads.open(
+        target_ip=PLC_IP,
+        target_ams_net_id=PLC_NET_ID,
+        target_ams_port=PLC_PORT
+    )
+    
+    warehouse = Warehouse(ads)
 
     while True:
         print("\n--- MENU ---")
-        print("1. Show stock")
-        print("2. Add stock")
-        print("3. Remove stock")
-        print("4. Show history")
-        print("5. Exit")
+        print("1. Show status")
+        print("2. Add block")
+        print("3. Remove block")
+        print("4. Exit")
 
         choice = input("Choose: ")
 
         if choice == "1":
-            warehouse.show_stock()
-            input("Press Enter to continue...")
+            warehouse.show()
 
         elif choice == "2":
-            product = input("Product name: ")
-            quantity = int(input("Quantity: "))
-            warehouse.add_stock(product, quantity)
-            input("Press Enter to continue...")
+            warehouse.add_block()
 
         elif choice == "3":
-            product = input("Product name: ")
-            quantity = int(input("Quantity: "))
-            warehouse.remove_stock(product, quantity)
-            input("Press Enter to continue...")
+            warehouse.remove_block()
 
         elif choice == "4":
-            warehouse.show_history()
-            input("Press Enter to continue...")
-
-        elif choice == "5":
-            print("Bye!")
+            ads.close()
+            print("Goodbye")
             break
 
         else:
