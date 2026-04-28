@@ -1,3 +1,24 @@
+import sys
+import os
+import time
+import threading
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sim_path = os.path.abspath(os.path.join(current_dir, "../block_storage_sim/src"))
+sys.path.append(sim_path)
+
+try:
+    from block_storage_simulator.simulator import BlockStorageSimulator
+    from block_storage_simulator.gui import SimulatorApp
+    from block_storage_simulator.constants import ConveyorState
+    from block_storage_simulator.models import TransferCommand
+    Has_Simulator = True
+except ImportError:
+    Has_Simulator = False
+if not Has_Simulator:
+    print("Error:simulator is not found")
+    sys.exit(1)
+
 class Warehouse:
     def __init__(self):
         self.stock = {}
