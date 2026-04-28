@@ -19,57 +19,61 @@ if not Has_Simulator:
     print("Error:simulator is not found")
     sys.exit(1)
 
+class Item:
+    def __init__(self, item_id, name):
+        self.item_id = item_id
+        self.name = name
+
+    def __str__(self):
+        return f"ID: {self.item_id}, Name: {self.name}"
+
+
 class Warehouse:
     def __init__(self):
-        self.stock = {}
-        self.history = []
+        self.items = []
+        self.next_id = 1
 
-    def add_stock(self, product, quantity):
-        if quantity <= 0:
-            print("Quantity must be greater than 0")
+    def add_item(self, name):
+        if name == "":
+            print("Invalid name")
             return
 
-        if product in self.stock:
-            self.stock[product] += quantity
-        else:
-            self.stock[product] = quantity
+        item = Item(self.next_id, name)
+        self.items.append(item)
+        self.next_id += 1
 
-        self.history.append(f"IN: {product} x{quantity}")
-        print(f"Added {quantity} of {product}")
+        print(f"Added: {item}")
 
-    def remove_stock(self, product, quantity):
-        if product not in self.stock:
-            print("Product not found")
+    def remove_item(self, name):
+        if not self.items:
+            print("Warehouse is empty")
             return
 
-        if self.stock[product] < quantity:
-            print("Not enough stock")
-            return
+        for item in self.items:
+            if item.name == name:
+                self.items.remove(item)
+                print(f"Removed: {item}")
+                return
 
-        self.stock[product] -= quantity
-        self.history.append(f"OUT: {product} x{quantity}")
-        print(f"Removed {quantity} of {product}")
-
-        if self.stock[product] == 0:
-            del self.stock[product]
+        print("Item not found")
 
     def show_stock(self):
-        print("\nCurrent stock:")
-        if not self.stock:
-            print("Empty")
+        if not self.items:
+            print("\nEmpty warehouse")
             return
 
-        for product, quantity in self.stock.items():
-            print(f"{product}: {quantity}")
+        print("\n--- STOCK ---")
+        print(f"Total items: {len(self.items)}")
 
-    def show_history(self):
-        print("\nTransaction history:")
-        if not self.history:
-            print("No transactions yet")
-            return
+        for i, item in enumerate(self.items):
+            if i == 0:
+                label = "(oldest)"
+            elif i == len(self.items) - 1:
+                label = "(newest)"
+            else:
+                label = ""
 
-        for item in self.history:
-            print(item)
+            print(f"{i+1}. {item} {label}")
 
 
 def main():
@@ -78,35 +82,24 @@ def main():
     while True:
         print("\n--- MENU ---")
         print("1. Show stock")
-        print("2. Add stock")
-        print("3. Remove stock")
-        print("4. Show history")
-        print("5. Exit")
+        print("2. Add item")
+        print("3. Remove item")
+        print("4. Exit")
 
         choice = input("Choose: ")
 
         if choice == "1":
             warehouse.show_stock()
-            input("Press Enter to continue...")
 
         elif choice == "2":
-            product = input("Product name: ")
-            quantity = int(input("Quantity: "))
-            warehouse.add_stock(product, quantity)
-            input("Press Enter to continue...")
+            name = input("Enter item name: ")
+            warehouse.add_item(name)
 
         elif choice == "3":
-            product = input("Product name: ")
-            quantity = int(input("Quantity: "))
-            warehouse.remove_stock(product, quantity)
-            input("Press Enter to continue...")
+            name = input("Enter item name: ")
+            warehouse.remove_item(name)
 
         elif choice == "4":
-            warehouse.show_history()
-            input("Press Enter to continue...")
-
-        elif choice == "5":
-            print("Bye!")
             break
 
         else:
