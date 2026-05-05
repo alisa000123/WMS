@@ -1,105 +1,220 @@
-import sys
-import os
-import time
-import threading
+from py_ads_client import ADSClient, ADSSymbol, BOOL, LREAL
+from time import sleep
+from collections import deque
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sim_path = os.path.abspath(os.path.join(current_dir, "../block_storage_sim/src"))
-sys.path.append(sim_path)
 
-try:
-    from block_storage_simulator.simulator import BlockStorageSimulator
-    from block_storage_simulator.gui import SimulatorApp
-    from block_storage_simulator.constants import ConveyorState
-    from block_storage_simulator.models import TransferCommand
-    Has_Simulator = True
-except ImportError:
-    Has_Simulator = False
-if not Has_Simulator:
-    print("Error:simulator is not found")
-    sys.exit(1)
+REMOTE_TRANSFER_ITEM = ADSSymbol("Remote.transfer_item", BOOL)
+REMOTE_SRC_X = ADSSymbol("Remote.src_x", LREAL)
+REMOTE_SRC_Y = ADSSymbol("Remote.src_y", LREAL)
+REMOTE_DST_X = ADSSymbol("Remote.dst_x", LREAL)
+REMOTE_DST_Y = ADSSymbol("Remote.dst_y", LREAL)
 
-class Item:
-    def __init__(self, item_id, name):
-        self.item_id = item_id
-        self.name = name
+REMOTE_SEND_PALLET = ADSSymbol("Remote.send_pallet", BOOL)
+REMOTE_RELEASE_FROM_IMAGING = ADSSymbol("Remote.release_from_imaging", BOOL)
+REMOTE_RETURN_PALLET = ADSSymbol("Remote.return_pallet", BOOL)
 
-    def __str__(self):
-        return f"ID: {self.item_id}, Name: {self.name}"
+
+PLC_IP = "127.0.0.1"
+PLC_NET_ID = "127.0.0.1.1.1"
+PLC_PORT = 851
+LOCAL_NET_ID = "127.0.0.1.1.2"
+
+TRANSFER_SLOT_CENTER_X = 160.0
+TRANSFER_SLOT_CENTER_Y = 410.0
+
+AREA_MIN_X = 0.0
+AREA_MIN_Y = 0.0
+AREA_MAX_X = 400.0
+STORAGE_MAX_Y = 300.0
+
+BLOCK_SIZE_MM = 60.0
+BLOCK_HALF_SIZE_MM = BLOCK_SIZE_MM / 2.0
 
 
 class Warehouse:
-    def __init__(self):
-        self.items = []
-        self.next_id = 1
+    def __init__(self, ads_client):
+        self.ads = ads_client
 
-    def add_item(self, name):
-        if name == "":
-            print("Invalid name")
-            return
+        self.positions = []
+        self.occupied = {}
 
-        item = Item(self.next_id, name)
-        self.items.append(item)
-        self.next_id += 1
+        self.items = {}
+        self.fifo_queue = deque()
+        self.next_item_id = 1
 
-        print(f"Added: {item}")
+        x = AREA_MIN_X + BLOCK_HALF_SIZE_MM
+        while x <= AREA_MAX_X - BLOCK_HALF_SIZE_MM:
+            y = AREA_MIN_Y + BLOCK_HALF_SIZE_MM
+            while y <= STORAGE_MAX_Y - BLOCK_HALF_SIZE_MM:
+                pos = (x, y)
+                self.positions.append(pos)
+                self.occupied[pos] = False
+                y += BLOCK_SIZE_MM
+            x += BLOCK_SIZE_MM
 
-    def remove_item(self, name):
+    def show(self):
+        occupied = sum(1 for value in self.occupied.values() if value)
+        total = len(self.positions)
+
+        print("\n--- STORAGE STATUS ---")
+        print(f"Total positions: {total}")
+        print(f"Occupied: {occupied}")
+        print(f"Free: {total - occupied}")
+
+        print("\n--- INDIVIDUAL ITEMS ---")
+        if not self.items:
+            print("No items in storage")
+        else:
+            for item_id, item in self.items.items():
+                print(
+                    f"Item #{item_id}: "
+                    f"position={item['position']}, "
+                    f"arrival_order={item['arrival_order']}"
+                )
+
+        print("\n--- FIFO SEQUENCE ---")
+        print(list(self.fifo_queue))
+
+    def transfer(self, src_x, src_y, dst_x, dst_y):
+        self.ads.write_symbol(REMOTE_SRC_X, src_x)
+        self.ads.write_symbol(REMOTE_SRC_Y, src_y)
+        self.ads.write_symbol(REMOTE_DST_X, dst_x)
+        self.ads.write_symbol(REMOTE_DST_Y, dst_y)
+
+        sleep(0.1)
+
+        self.ads.write_symbol(REMOTE_TRANSFER_ITEM, True)
+        sleep(0.1)
+        self.ads.write_symbol(REMOTE_TRANSFER_ITEM, False)
+
+    def add_block(self):
+        for pos in self.positions:
+            if not self.occupied[pos]:
+                x, y = pos
+
+                self.ads.write_symbol(REMOTE_SEND_PALLET, True)
+                sleep(0.1)
+                self.ads.write_symbol(REMOTE_SEND_PALLET, False)
+                sleep(0.5)
+
+                self.ads.write_symbol(REMOTE_RELEASE_FROM_IMAGING, True)
+                sleep(0.1)
+                self.ads.write_symbol(REMOTE_RELEASE_FROM_IMAGING, False)
+                sleep(0.5)
+
+                self.transfer(
+                    TRANSFER_SLOT_CENTER_X,
+                    TRANSFER_SLOT_CENTER_Y,
+                    x,
+                    y
+                )
+
+                item_id = self.next_item_id
+                self.next_item_id += 1
+
+                self.items[item_id] = {
+                    "id": item_id,
+                    "position": pos,
+                    "arrival_order": item_id
+                }
+
+                self.occupied[pos] = True
+                self.fifo_queue.append(item_id)
+
+                print(f"Item #{item_id} added to {pos}")
+
+                sleep(0.5)
+
+                self.ads.write_symbol(REMOTE_RETURN_PALLET, True)
+                sleep(0.1)
+                self.ads.write_symbol(REMOTE_RETURN_PALLET, False)
+
+                return
+
+        print("Warehouse is full")
+
+    def remove_block_by_id(self):
         if not self.items:
             print("Warehouse is empty")
             return
 
-        for item in self.items:
-            if item.name == name:
-                self.items.remove(item)
-                print(f"Removed: {item}")
-                return
-
-        print("Item not found")
-
-    def show_stock(self):
-        if not self.items:
-            print("\nEmpty warehouse")
+        try:
+            item_id = int(input("Enter item ID to remove: "))
+        except ValueError:
+            print("Wrong ID")
             return
 
-        print("\n--- STOCK ---")
-        print(f"Total items: {len(self.items)}")
+        if item_id not in self.items:
+            print(f"Item #{item_id} does not exist")
+            return
 
-        for i, item in enumerate(self.items):
-            if i == 0:
-                label = "(oldest)"
-            elif i == len(self.items) - 1:
-                label = "(newest)"
-            else:
-                label = ""
+        item = self.items[item_id]
+        x, y = item["position"]
 
-            print(f"{i+1}. {item} {label}")
+        self.ads.write_symbol(REMOTE_SEND_PALLET, True)
+        sleep(0.1)
+        self.ads.write_symbol(REMOTE_SEND_PALLET, False)
+        sleep(0.5)
+
+        self.ads.write_symbol(REMOTE_RELEASE_FROM_IMAGING, True)
+        sleep(0.1)
+        self.ads.write_symbol(REMOTE_RELEASE_FROM_IMAGING, False)
+        sleep(0.5)
+
+        self.transfer(
+            x,
+            y,
+            TRANSFER_SLOT_CENTER_X,
+            TRANSFER_SLOT_CENTER_Y
+        )
+      
+        self.occupied[item["position"]] = False
+        del self.items[item_id]
+
+        if item_id in self.fifo_queue:
+            self.fifo_queue.remove(item_id)
+
+        print(f"Item #{item_id} removed from {(x, y)}")
+
+        sleep(0.5)
+
+        self.ads.write_symbol(REMOTE_RETURN_PALLET, True)
+        sleep(0.1)
+        self.ads.write_symbol(REMOTE_RETURN_PALLET, False)
 
 
 def main():
-    warehouse = Warehouse()
+    ads = ADSClient(local_ams_net_id=LOCAL_NET_ID)
+
+    ads.open(
+        target_ip=PLC_IP,
+        target_ams_net_id=PLC_NET_ID,
+        target_ams_port=PLC_PORT
+    )
+
+    warehouse = Warehouse(ads)
 
     while True:
         print("\n--- MENU ---")
-        print("1. Show stock")
-        print("2. Add item")
-        print("3. Remove item")
+        print("1. Show status")
+        print("2. Add block")
+        print("3. Remove block by ID")
         print("4. Exit")
 
         choice = input("Choose: ")
 
         if choice == "1":
-            warehouse.show_stock()
+            warehouse.show()
 
         elif choice == "2":
-            name = input("Enter item name: ")
-            warehouse.add_item(name)
+            warehouse.add_block()
 
         elif choice == "3":
-            name = input("Enter item name: ")
-            warehouse.remove_item(name)
+            warehouse.remove_block_by_id()
 
         elif choice == "4":
+            ads.close()
+            print("Goodbye")
             break
 
         else:
