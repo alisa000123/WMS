@@ -1,48 +1,24 @@
-# Warehouse flow
-Supplier → Warehouse → Customer
+##Tier 2
+#Adding an item
+1. The system searches for the first free coordinate (x, y) in the storage area.
+2. The system checks positions sequentially until it finds an empty one.
+3. If a free position is found:
+    * The block is moved to that coordinate.
+    * The position is marked as occupied.
+    * The coordinate is added to a FIFO sequence.
+4. If no free position is available:
+    * The system reports that the warehouse is full.
 
-System must answer:
-What is in stock?
-What leaves the warehouse?
-What remains?
+#FIFO logic
+1. The system maintains a FIFO sequence of occupied coordinates.
+2. Each new coordinates is added to the end of the sequence.
+3. The sequence represents the arrival order of blocks. The first element corresponds to the oldest stored block.
+4. Coordinates are removed from the beginning of the sequence
 
-# Three Levels of Complexity
-## Tier 1 (required to pass)
-Track quantities (bulk storage)
-
-## Tier 2
-FIFO batches (oldest first)
-
-## Tier 3
-Individual item tracking
-
-# Workflow
-1. Understand the problem
-2. Define requirements
-3. Design structure
-4. Implement
-5. Test
-6. Improve
-
-# Requirements for all tiers
-The system must:
-- User Interface
-  - Indicates the stock state
-    - Item count
-    - Item info (depending on the tier)
-  - Controls for operating the stock
-    - Adding item
-    - Removing item (according to the tier requirements)
-- Usage
-  - Single run operation. All actions must be able to performed by single launch of the program. The launch of the simulator is excluded from this requirement.
-  - The operation of the software must be possible without seeing the source code
-- Compatibility
-  - The program must be compatible with the real device in the lab and the simulator. The demonstrations are made with the simulator.
-- Software architecture
-  - The source code must be clear and readable
-  - Object oriented programming is to be used
-  - The software needs to be documented in a proper way so that it can be understood
-- Source code management
-  - The commits are made in consistent manner
-  - The stable versions are clearly marked
-  - Each Tier has their own branch in Git
+#Removing an item
+1. The system takes the first coordinate from the FIFO sequence.
+2. The block at that coordinate is removed.
+3. The position is marked as free.
+4. The coordinate is removed from the FIFO sequence.
+5. If the sequence is empty:
+    * The system reports that the warehouse is empty.
