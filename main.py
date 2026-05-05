@@ -1,137 +1,193 @@
-import sys
-import os
-import time
-import threading
-
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sim_path = os.path.abspath(os.path.join(current_dir, "../block_storage_sim/src"))
-sys.path.append(sim_path)
-
-try:
-    from block_storage_simulator.simulator import BlockStorageSimulator
-    from block_storage_simulator.gui import SimulatorApp
-    from block_storage_simulator.constants import ConveyorState
-    from block_storage_simulator.models import TransferCommand
-    Has_Simulator = True
-except ImportError:
-    Has_Simulator = False
-if not Has_Simulator:
-    print("Error:simulator is not found")
-    sys.exit(1)
+from py_ads_client import ADSClient, ADSSymbol, BOOL, LREAL
+from time import sleep
+from collections import deque
 
 
-class Batch:
-    def __init__(self, quantity):
-        self.quantity = quantity
+REMOTE_TRANSFER_ITEM = ADSSymbol("Remote.transfer_item", BOOL)
+REMOTE_SRC_X = ADSSymbol("Remote.src_x", LREAL)
+REMOTE_SRC_Y = ADSSymbol("Remote.src_y", LREAL)
+REMOTE_DST_X = ADSSymbol("Remote.dst_x", LREAL)
+REMOTE_DST_Y = ADSSymbol("Remote.dst_y", LREAL)
+
+REMOTE_SEND_PALLET = ADSSymbol("Remote.send_pallet", BOOL)
+REMOTE_RELEASE_FROM_IMAGING = ADSSymbol("Remote.release_from_imaging", BOOL)
+REMOTE_RETURN_PALLET = ADSSymbol("Remote.return_pallet", BOOL)
+
+
+PLC_IP = "127.0.0.1"
+PLC_NET_ID = "127.0.0.1.1.1"
+PLC_PORT = 851
+LOCAL_NET_ID = "127.0.0.1.1.2"
+
+TRANSFER_SLOT_CENTER_X = 160.0
+TRANSFER_SLOT_CENTER_Y = 410.0
+
+AREA_MIN_X = 0.0
+AREA_MIN_Y = 0.0
+AREA_MAX_X = 400.0
+STORAGE_MAX_Y = 300.0
+
+BLOCK_SIZE_MM = 60.0
+BLOCK_HALF_SIZE_MM = BLOCK_SIZE_MM / 2.0
 
 
 class Warehouse:
-    def __init__(self):
-        self.stock = {}
+    def __init__(self, ads_client):
+        self.ads = ads_client
+        self.positions = []
+        self.occupied = {}
+        self.fifo_queue = deque()
 
-    def add_stock(self, product, quantity):
-        if quantity <= 0:
-            print("Invalid quantity")
+        x = AREA_MIN_X + BLOCK_HALF_SIZE_MM
+        while x <= AREA_MAX_X - BLOCK_HALF_SIZE_MM:
+            y = AREA_MIN_Y + BLOCK_HALF_SIZE_MM
+            while y <= STORAGE_MAX_Y - BLOCK_HALF_SIZE_MM:
+                pos = (x, y)
+                self.positions.append(pos)
+                self.occupied[pos] = False
+                y += BLOCK_SIZE_MM
+            x += BLOCK_SIZE_MM
+
+    def show(self):
+        occupied = sum(1 for value in self.occupied.values() if value)
+        total = len(self.positions)
+
+        print("\n--- STORAGE STATUS ---")
+        print(f"Total positions: {total}")
+        print(f"Occupied: {occupied}")
+        print(f"Free: {total - occupied}")
+        print(f"FIFO queue: {list(self.fifo_queue)}")
+
+    def transfer(self, src_x, src_y, dst_x, dst_y):
+        self.ads.write_symbol(REMOTE_SRC_X, src_x)
+        self.ads.write_symbol(REMOTE_SRC_Y, src_y)
+        self.ads.write_symbol(REMOTE_DST_X, dst_x)
+        self.ads.write_symbol(REMOTE_DST_Y, dst_y)
+
+        sleep(0.1)
+
+        self.ads.write_symbol(REMOTE_TRANSFER_ITEM, True)
+        sleep(0.1)
+        self.ads.write_symbol(REMOTE_TRANSFER_ITEM, False)
+
+    def add_block(self):
+        for pos in self.positions:
+            if not self.occupied[pos]:
+                x, y = pos
+
+                # send pallet
+                self.ads.write_symbol(REMOTE_SEND_PALLET, True)
+                sleep(0.1)
+                self.ads.write_symbol(REMOTE_SEND_PALLET, False)
+                sleep(0.5)
+
+                # release from imaging
+                self.ads.write_symbol(REMOTE_RELEASE_FROM_IMAGING, True)
+                sleep(0.1)
+                self.ads.write_symbol(REMOTE_RELEASE_FROM_IMAGING, False)
+                sleep(0.5)
+
+                # move to storage
+                self.transfer(
+                    TRANSFER_SLOT_CENTER_X,
+                    TRANSFER_SLOT_CENTER_Y,
+                    x,
+                    y
+                )
+
+                self.occupied[pos] = True
+                self.fifo_queue.append(pos)
+
+                print(f"Block added to {pos}")
+
+                sleep(0.5)
+
+                # return pallet
+                self.ads.write_symbol(REMOTE_RETURN_PALLET, True)
+                sleep(0.1)
+                self.ads.write_symbol(REMOTE_RETURN_PALLET, False)
+
+                return
+
+        print("Warehouse is full")
+
+    def remove_block(self):
+        if not self.fifo_queue:
+            print("Warehouse is empty")
             return
 
-        batch = Batch(quantity)
+        pos = self.fifo_queue.popleft()
 
-        if product not in self.stock:
-            self.stock[product] = []
-
-        self.stock[product].append(batch)
-        print(f"Added batch: {quantity} x {product}")
-
-    def remove_stock(self, product, quantity):
-        if quantity <= 0:
-            print("Invalid quantity")
+        if not self.occupied[pos]:
+            print(f"FIFO error at {pos}")
             return
 
-        if product not in self.stock or not self.stock[product]:
-            print(f"{product} is not in stock")
-            return
+        x, y = pos
 
-        print(f"\nRemoving {quantity} x {product} using FIFO...")
+        # send pallet
+        self.ads.write_symbol(REMOTE_SEND_PALLET, True)
+        sleep(0.1)
+        self.ads.write_symbol(REMOTE_SEND_PALLET, False)
+        sleep(0.5)
 
-        batches = self.stock[product]
+        # release from imaging
+        self.ads.write_symbol(REMOTE_RELEASE_FROM_IMAGING, True)
+        sleep(0.1)
+        self.ads.write_symbol(REMOTE_RELEASE_FROM_IMAGING, False)
+        sleep(0.5)
 
-        while quantity > 0 and batches:
-            oldest_batch = batches[0]
+        # move from storage
+        self.transfer(
+            x,
+            y,
+            TRANSFER_SLOT_CENTER_X,
+            TRANSFER_SLOT_CENTER_Y
+        )
 
-            if oldest_batch.quantity <= quantity:
-                print(f"Removed {oldest_batch.quantity} from OLDEST batch")
-                quantity -= oldest_batch.quantity
-                batches.pop(0)
-            else:
-                print(f"Removed {quantity} from OLDEST batch")
-                oldest_batch.quantity -= quantity
-                quantity = 0
+        self.occupied[pos] = False
 
-        if quantity > 0:
-            print(f"Not enough stock! Missing {quantity} x {product}")
+        print(f"Oldest block removed from {pos}")
 
-        if product in self.stock and not self.stock[product]:
-            del self.stock[product]
+        sleep(0.5)
 
-    def show_stock(self):
-        if not self.stock:
-            print("\nWarehouse is empty")
-            return
-
-        print("\n--- STOCK ---")
-
-        for product, batches in self.stock.items():
-            total = sum(batch.quantity for batch in batches)
-
-            print(f"\nitem: {product}")
-            print(f"Total: {total}")
-
-            for i, batch in enumerate(batches):
-                if i == 0:
-                    label = "(oldest)"
-                elif i == len(batches) - 1:
-                    label = "(newest)"
-                else:
-                    label = ""
-
-                print(f"Batch {i + 1}: {batch.quantity} {label}")
+        # return pallet
+        self.ads.write_symbol(REMOTE_RETURN_PALLET, True)
+        sleep(0.1)
+        self.ads.write_symbol(REMOTE_RETURN_PALLET, False)
 
 
 def main():
-    warehouse = Warehouse()
+    ads = ADSClient(local_ams_net_id=LOCAL_NET_ID)
+
+    ads.open(
+        target_ip=PLC_IP,
+        target_ams_net_id=PLC_NET_ID,
+        target_ams_port=PLC_PORT
+    )
+
+    warehouse = Warehouse(ads)
 
     while True:
         print("\n--- MENU ---")
-        print("1. Show stock")
-        print("2. Add stock")
-        print("3. Remove stock")
+        print("1. Show status")
+        print("2. Add block")
+        print("3. Remove block FIFO")
         print("4. Exit")
 
         choice = input("Choose: ")
 
         if choice == "1":
-            warehouse.show_stock()
+            warehouse.show()
 
         elif choice == "2":
-            product = input("Enter product name: ")
-
-            try:
-                quantity = int(input("Enter quantity: "))
-                warehouse.add_stock(product, quantity)
-            except ValueError:
-                print("Invalid input")
+            warehouse.add_block()
 
         elif choice == "3":
-            product = input("Enter product name: ")
-
-            try:
-                quantity = int(input("Enter quantity: "))
-                warehouse.remove_stock(product, quantity)
-            except ValueError:
-                print("Invalid input")
+            warehouse.remove_block()
 
         elif choice == "4":
-            print("Exiting...")
+            ads.close()
+            print("Goodbye")
             break
 
         else:
