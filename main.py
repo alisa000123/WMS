@@ -68,8 +68,7 @@ class Warehouse:
             for item_id, item in self.items.items():
                 print(
                     f"Item #{item_id}: "
-                    f"position={item['position']}, "
-                    f"arrival_order={item['arrival_order']}"
+                    f"position={item['position']}"
                 )
 
         print("\n--- FIFO SEQUENCE ---")
