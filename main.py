@@ -55,8 +55,8 @@ class Warehouse:
                 pos = (x, y)
                 self.positions.append(pos) # Add coordinate to the position list
                 self.occupied[pos] = False # Initially every position is free
-                y += BLOCK_SIZE_MM
-            x += BLOCK_SIZE_MM
+                y += BLOCK_SIZE_MM + 20
+            x += BLOCK_SIZE_MM + 20
 
     def show(self):
         # Count how many positions are currently occupied
