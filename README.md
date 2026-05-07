@@ -1,48 +1,32 @@
-# Warehouse flow
-Supplier → Warehouse → Customer
+##Tier 3
+#Adding a block
+1. The system searches for the first free coordinate (x, y) in the storage area.
+2. The system checks each position until it finds an empty one.
+3. If a free position is found:
+    * A unique ID is assigned to the block.
+    * The block is moved to that coordinate.
+    * The position is marked as occupied.
+    * The block information is stored:
+        * block ID
+        * coordinate
+4. If no free position is available:
+    * The system reports that the warehouse is full.
 
-System must answer:
-What is in stock?
-What leaves the warehouse?
-What remains?
+Sequence logic
+1. The system keeps a sequence of block IDs.
+2. Each new block ID is added to the end of the sequence.
+3. The sequence represents the arrival order of blocks.The first element corresponds to the oldest stored block.
+4.IDs are removed from the beginning of the sequence.
 
-# Three Levels of Complexity
-## Tier 1 (required to pass)
-Track quantities (bulk storage)
+Removing a block by ID
 
-## Tier 2
-FIFO batches (oldest first)
-
-## Tier 3
-Individual item tracking
-
-# Workflow
-1. Understand the problem
-2. Define requirements
-3. Design structure
-4. Implement
-5. Test
-6. Improve
-
-# Requirements for all tiers
-The system must:
-- User Interface
-  - Indicates the stock state
-    - Item count
-    - Item info (depending on the tier)
-  - Controls for operating the stock
-    - Adding item
-    - Removing item (according to the tier requirements)
-- Usage
-  - Single run operation. All actions must be able to performed by single launch of the program. The launch of the simulator is excluded from this requirement.
-  - The operation of the software must be possible without seeing the source code
-- Compatibility
-  - The program must be compatible with the real device in the lab and the simulator. The demonstrations are made with the simulator.
-- Software architecture
-  - The source code must be clear and readable
-  - Object oriented programming is to be used
-  - The software needs to be documented in a proper way so that it can be understood
-- Source code management
-  - The commits are made in consistent manner
-  - The stable versions are clearly marked
-  - Each Tier has their own branch in Git
+1. The system asks the user which block to remove by ID.
+2. The system checks if the block ID exists.
+3. If the block exists:
+    * The system finds its coordinate.
+    * The block is removed from that coordinate.
+    * The position is marked as free.
+    * The block ID is removed from the sequence.
+    * The block information is deleted from the system.
+4. If the block does not exist:
+    * The system reports that the block does not exist.
