@@ -1,66 +1,75 @@
+# Import libraries
 from py_ads_client import ADSClient, ADSSymbol, BOOL, LREAL
 from time import sleep
 from collections import deque
 
-
+# ADS symbols used to send transfer commands to the PLS simulator
 REMOTE_TRANSFER_ITEM = ADSSymbol("Remote.transfer_item", BOOL)
 REMOTE_SRC_X = ADSSymbol("Remote.src_x", LREAL)
 REMOTE_SRC_Y = ADSSymbol("Remote.src_y", LREAL)
 REMOTE_DST_X = ADSSymbol("Remote.dst_x", LREAL)
 REMOTE_DST_Y = ADSSymbol("Remote.dst_y", LREAL)
 
+# Control signals
 REMOTE_SEND_PALLET = ADSSymbol("Remote.send_pallet", BOOL)
 REMOTE_RELEASE_FROM_IMAGING = ADSSymbol("Remote.release_from_imaging", BOOL)
 REMOTE_RETURN_PALLET = ADSSymbol("Remote.return_pallet", BOOL)
 
-
+# PLC connection settings
 PLC_IP = "127.0.0.1"
 PLC_NET_ID = "127.0.0.1.1.1"
 PLC_PORT = 851
 LOCAL_NET_ID = "127.0.0.1.1.2"
 
+# Fixed coordinate of the transfer slot
 TRANSFER_SLOT_CENTER_X = 160.0
 TRANSFER_SLOT_CENTER_Y = 410.0
 
+# Storage area limits
 AREA_MIN_X = 0.0
 AREA_MIN_Y = 0.0
 AREA_MAX_X = 400.0
 STORAGE_MAX_Y = 300.0
 
+# Block size
 BLOCK_SIZE_MM = 60.0
 BLOCK_HALF_SIZE_MM = BLOCK_SIZE_MM / 2.0
 
 
 class Warehouse:
     def __init__(self, ads_client):
-        self.ads = ads_client
+        self.ads = ads_client # Store ADS client connection
 
-        self.positions = []
-        self.occupied = {}
+        self.positions = [] # List of all possible storage coordinates
+        self.occupied = {} # Dictionary that stores whether each coordinate is occupied
 
-        self.items = {}
-        self.fifo_queue = deque()
-        self.next_item_id = 1
+        self.items = {}# Dictionary that stores  item information by item ID
+        self.fifo_queue = deque()# sequence of IDs
+        self.next_item_id = 1 # Next ID
 
+        # Generate all valid storage positions in a grid
         x = AREA_MIN_X + BLOCK_HALF_SIZE_MM
         while x <= AREA_MAX_X - BLOCK_HALF_SIZE_MM:
             y = AREA_MIN_Y + BLOCK_HALF_SIZE_MM
             while y <= STORAGE_MAX_Y - BLOCK_HALF_SIZE_MM:
                 pos = (x, y)
-                self.positions.append(pos)
-                self.occupied[pos] = False
+                self.positions.append(pos) # Add coordinate to the position list
+                self.occupied[pos] = False # Initially every position is free
                 y += BLOCK_SIZE_MM
             x += BLOCK_SIZE_MM
 
     def show(self):
+        # Count how many positions are currently occupied
         occupied = sum(1 for value in self.occupied.values() if value)
         total = len(self.positions)
 
+        # Print storage information
         print("\n--- STORAGE STATUS ---")
         print(f"Total positions: {total}")
         print(f"Occupied: {occupied}")
         print(f"Free: {total - occupied}")
 
+        # Show all stored block IDs and positions
         print("\n--- INDIVIDUAL ITEMS ---")
         if not self.items:
             print("No items in storage")
@@ -70,60 +79,68 @@ class Warehouse:
                     f"Item #{item_id}: "
                     f"position={item['position']}"
                 )
-
+        # Show sequence of IDs
         print("\n--- FIFO SEQUENCE ---")
         print(list(self.fifo_queue))
 
     def transfer(self, src_x, src_y, dst_x, dst_y):
+        # Send source coordinates to the PLC
         self.ads.write_symbol(REMOTE_SRC_X, src_x)
         self.ads.write_symbol(REMOTE_SRC_Y, src_y)
+        # Send destination coordinates to the PLC
         self.ads.write_symbol(REMOTE_DST_X, dst_x)
         self.ads.write_symbol(REMOTE_DST_Y, dst_y)
 
         sleep(0.1)
-
+        # Send a short pulse to start the transfer
         self.ads.write_symbol(REMOTE_TRANSFER_ITEM, True)
         sleep(0.1)
         self.ads.write_symbol(REMOTE_TRANSFER_ITEM, False)
 
     def add_block(self):
+        # Search for the first free storage position
         for pos in self.positions:
             if not self.occupied[pos]:
                 x, y = pos
 
+                # Send pallet to imaging
                 self.ads.write_symbol(REMOTE_SEND_PALLET, True)
                 sleep(0.1)
                 self.ads.write_symbol(REMOTE_SEND_PALLET, False)
                 sleep(0.5)
 
+                # Release from imaging
                 self.ads.write_symbol(REMOTE_RELEASE_FROM_IMAGING, True)
                 sleep(0.1)
                 self.ads.write_symbol(REMOTE_RELEASE_FROM_IMAGING, False)
                 sleep(0.5)
 
+                # Move block from transfer to storage position
                 self.transfer(
                     TRANSFER_SLOT_CENTER_X,
                     TRANSFER_SLOT_CENTER_Y,
                     x,
                     y
                 )
-
+                # Create unique item ID
                 item_id = self.next_item_id
                 self.next_item_id += 1
 
+                # Store individual item information
                 self.items[item_id] = {
                     "id": item_id,
                     "position": pos,
                     "arrival_order": item_id
                 }
 
+                # Mark position as occupied
                 self.occupied[pos] = True
-                self.fifo_queue.append(item_id)
+                self.fifo_queue.append(item_id) # Add to end of FIFO
 
                 print(f"Item #{item_id} added to {pos}")
 
                 sleep(0.5)
-
+                # Return pallet back to home
                 self.ads.write_symbol(REMOTE_RETURN_PALLET, True)
                 sleep(0.1)
                 self.ads.write_symbol(REMOTE_RETURN_PALLET, False)
@@ -133,58 +150,67 @@ class Warehouse:
         print("Warehouse is full")
 
     def remove_block_by_id(self):
+        # Check if there are no items
         if not self.items:
             print("Warehouse is empty")
             return
-
+        
+        # Ask user which item to remove
         try:
             item_id = int(input("Enter item ID to remove: "))
         except ValueError:
             print("Wrong ID")
             return
-
+        
+        # Check if item ID exists
         if item_id not in self.items:
             print(f"Item #{item_id} does not exist")
             return
-
+        
+        # Find item coordinates
         item = self.items[item_id]
         x, y = item["position"]
 
+        # Send pallet to imaging
         self.ads.write_symbol(REMOTE_SEND_PALLET, True)
         sleep(0.1)
         self.ads.write_symbol(REMOTE_SEND_PALLET, False)
         sleep(0.5)
 
+        # Release pallet from imaging
         self.ads.write_symbol(REMOTE_RELEASE_FROM_IMAGING, True)
         sleep(0.1)
         self.ads.write_symbol(REMOTE_RELEASE_FROM_IMAGING, False)
         sleep(0.5)
 
+        # Move block from storage position to the transfer
         self.transfer(
             x,
             y,
             TRANSFER_SLOT_CENTER_X,
             TRANSFER_SLOT_CENTER_Y
         )
-      
+        # Mark this position as free
         self.occupied[item["position"]] = False
-        del self.items[item_id]
+        del self.items[item_id] # Delete item from dictionary
 
+        # Remove item ID from sequence
         if item_id in self.fifo_queue:
             self.fifo_queue.remove(item_id)
 
         print(f"Item #{item_id} removed from {(x, y)}")
 
         sleep(0.5)
-
+        # Return pallet back to home
         self.ads.write_symbol(REMOTE_RETURN_PALLET, True)
         sleep(0.1)
         self.ads.write_symbol(REMOTE_RETURN_PALLET, False)
 
 
 def main():
+    # Create ADS client
     ads = ADSClient(local_ams_net_id=LOCAL_NET_ID)
-
+    # Open connection to PLC simulator
     ads.open(
         target_ip=PLC_IP,
         target_ams_net_id=PLC_NET_ID,
@@ -193,6 +219,7 @@ def main():
 
     warehouse = Warehouse(ads)
 
+    # Terminal menu
     while True:
         print("\n--- MENU ---")
         print("1. Show status")
@@ -212,6 +239,7 @@ def main():
             warehouse.remove_block_by_id()
 
         elif choice == "4":
+            # Close ADS connection before exiting
             ads.close()
             print("Goodbye")
             break
@@ -219,6 +247,6 @@ def main():
         else:
             print("Wrong choice")
 
-
+# Start the program
 if __name__ == "__main__":
     main()
